@@ -25,6 +25,42 @@ CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT", "")
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120 Safari/537.36"
 
 
+def _tg(method, params):
+    data = urllib.parse.urlencode(params).encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{BOT}/{method}",
+        data=data, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode())
+
+
+def heal_webhook():
+    """Self-heal: if Telegram's webhook is unset or erroring, re-point it at the
+    cloud bridge Worker. Runs from GitHub Actions, so it repairs the live bot even
+    with the local host powered OFF (the core machine-jumper-matrix guarantee)."""
+    if not (BOT and BRIDGE_URL):
+        return "skip (no BOT/BRIDGE_URL)"
+    try:
+        info = _tg("getWebhookInfo", {}).get("result", {})
+    except Exception as e:  # noqa: BLE001
+        return f"getWebhookInfo failed: {e}"
+    cur = (info.get("url") or "").rstrip("/")
+    want = BRIDGE_URL.rstrip("/")
+    last_err = info.get("last_error_message")
+    needs = (cur != want) or bool(last_err)
+    if not needs:
+        return f"healthy (url set, no errors, pending={info.get('pending_update_count')})"
+    try:
+        res = _tg("setWebhook", {"url": want, "max_connections": 40,
+                                 "drop_pending_updates": "false"})
+    except Exception as e:  # noqa: BLE001
+        return f"setWebhook failed: {e}"
+    ok = res.get("ok")
+    msg = f"REPAIRED webhook (was url={cur or 'NONE'} err={last_err}) -> {want} ok={ok}"
+    alert(msg)
+    return msg
+
+
 def alert(msg):
     print("ALERT:", msg)
     if not (BOT and CHAT):
@@ -69,6 +105,12 @@ def main():
     if BRIDGE_URL:
         ok3, d3 = check("telegram bridge", lambda: _get(f"{BRIDGE_URL}/?selftest=1"))
         results["bridge"] = ok3
+
+    # Self-heal the Telegram webhook (works with the local host OFF).
+    if BOT and BRIDGE_URL:
+        wh = heal_webhook()
+        print("webhook:", wh)
+        results["webhook"] = wh.startswith(("healthy", "REPAIRED"))
 
     healthy = sum(1 for v in results.values() if v)
     total = len(results)
