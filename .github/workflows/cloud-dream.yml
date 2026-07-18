@@ -1,0 +1,31 @@
+name: Cloud Dream Engine
+
+# Phase 16 — cloud-native skill synthesis (port of scripts/dream-engine.sh).
+# Mines shared cloud memory (recent agent runs in D1) and asks cloud-brain-proxy
+# to surface one recurring pattern worth a reusable skill, storing the proposal
+# back into D1 (directive 'dream:latest-skill') for review. GitHub-hosted.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'       # 03:00 UTC nightly
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run dream engine
+        working-directory: cloud-agents
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_URL }}
+          PROXY_AUTH_TOKEN: ${{ secrets.PROXY_AUTH_TOKEN }}
+          BRAIN_MODEL: ${{ vars.BRAIN_MODEL || 'cloud-brain-proxy/auto' }}
+        run: python3 dream.py
