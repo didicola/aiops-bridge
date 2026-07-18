@@ -1,0 +1,25 @@
+# render.yaml — Blueprint for the cloud-immortal Telegram bridge.
+# Deploys a Docker web service that runs asi-telegram-bridge.py.
+# The bridge polls Telegram and answers via a PUBLIC cloud LLM proxy
+# (BLIND_PROXY_URL), so it works even when the local sovereign machine is OFF.
+services:
+  - type: web
+    name: aiops-telegram-bridge
+    runtime: docker
+    dockerfilePath: ./Dockerfile.telegram
+    # Free tier sleeps after ~15 min idle; the bridge self-pings its own URL
+    # (RENDER_EXTERNAL_URL) every 5 min to stay warm.
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: BLIND_PROXY_URL
+        value: https://text.pollinations.ai/openai/v1/chat/completions
+      - key: TELEGRAM_BRIDGE_MODEL
+        value: openai
+      - key: TOR_SOCKS
+        value: ""
+      - key: PORT
+        value: "10000"
