@@ -72,9 +72,23 @@ def main():
         print("LLM failed:", e)
         return 1
 
-    if diff.startswith("```"):
-        diff = diff.strip("`").split("\n", 1)[-1] if "\n" in diff else diff
-        diff = diff.replace("diff\n", "", 1).replace("patch\n", "", 1)
+    # Extract a fenced code block if the model wrapped the diff in ```.
+    if "```" in diff:
+        parts = diff.split("```")
+        for seg in parts:
+            s = seg.lstrip()
+            if s.startswith(("diff", "patch")):
+                s = s.split("\n", 1)[-1]
+            if "--- a/" in s or "--- " in s:
+                diff = s
+                break
+    # Keep only from the first diff header onward (drop any leading prose).
+    idx = diff.find("--- a/")
+    if idx == -1:
+        idx = diff.find("diff --git")
+    if idx > 0:
+        diff = diff[idx:]
+    diff = diff.rstrip() + "\n"
     if "NO-OPT" in diff or "--- a/" not in diff:
         asi.log_run("evolutionary", "no-opt", "agent found nothing worth changing")
         print("NO-OPT")
