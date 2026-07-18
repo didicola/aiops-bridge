@@ -1,0 +1,32 @@
+name: Cloud Model-Discovery
+
+# Phase 16 — cloud-native AI-Ops agent. Runs on GitHub-hosted runners so it
+# survives local poweroff. Probes HuggingFace for new free models, scores them,
+# and records candidates into shared cloud memory (D1) via the cloud-brain-proxy
+# Worker. No local host, no Cloudflare API token required.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'      # every 6 hours
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run model-discovery
+        working-directory: cloud-agents
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_URL }}
+          PROXY_AUTH_TOKEN: ${{ secrets.PROXY_AUTH_TOKEN }}
+          BRAIN_MODEL: ${{ vars.BRAIN_MODEL || 'cloud-brain-proxy/auto' }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python3 model_discovery.py
