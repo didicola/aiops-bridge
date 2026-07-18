@@ -4,11 +4,12 @@
 # Telegram bot survives the LOCAL machine dying. The container polls Telegram and
 # routes LLM calls to a CLOUD blind-proxy public URL (NOT localhost) — see below.
 #
-# Base: python:3.12-slim (small, has python3 + pip).
+# Base: python:3.12-slim (small, has python3 + stdlib urllib — no pip needed).
 FROM python:3.12-slim
 
-# The bridge's only third-party dependency is `requests`.
-RUN pip install --no-cache-dir requests
+# The bridge uses ONLY the Python standard library (urllib), so there is NO
+# third-party dependency and NO PyPI reachability requirement during build.
+# This keeps the cloud build bulletproof on any CI.
 
 # Copy the bridge script into the image. We COPY it (never edit it) so the
 # fortress-immutable contract holds.
