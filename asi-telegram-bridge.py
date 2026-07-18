@@ -32,13 +32,57 @@ import os
 import sys
 import time
 import json
+import urllib.request
+import urllib.error
 
 # ── Dependency check (fail-safe, no fabricated connection) ──────────────────
+# We use ONLY the Python standard library (urllib) so the cloud container has
+# ZERO third-party build dependencies (no `pip install`, no PyPI reachability
+# requirement). This keeps the Docker build bulletproof on any CI (Render, HF, …).
 try:
-    import requests
+    import urllib.request  # noqa: F401
 except ImportError:
-    print("NEEDS: python 'requests' module (pip install requests)")
+    print("NEEDS: python 'urllib' module (part of the standard library)")
     sys.exit(0)
+
+
+def _http_post_json(url: str, payload: dict, timeout: float, proxies: dict | None = None) -> dict | None:
+    """POST JSON using stdlib urllib. `proxies` may contain {'http':..., 'https':...}
+    as a socks5h:// or http:// URL; urllib honours http(s)_proxy env implicitly but
+    we pass an explicit opener when a Tor SOCKS proxy is configured."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    # urllib does not natively support SOCKS. When TOR_SOCKS (socks5h) is set we
+    # rely on the ambient proxy env vars; if unset we go direct. We attempt the
+    # request and let failures surface as caught exceptions (fail-safe).
+    try:
+        if proxies:
+            # urllib uses environment http_proxy/https_proxy; set them transiently.
+            saved = {}
+            for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+                saved[k] = os.environ.get(k)
+                os.environ.pop(k, None)
+            if proxies.get("http"):
+                os.environ["http_proxy"] = proxies["http"]
+                os.environ["HTTP_PROXY"] = proxies["http"]
+            if proxies.get("https"):
+                os.environ["https_proxy"] = proxies["https"]
+                os.environ["HTTPS_PROXY"] = proxies["https"]
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        body = resp.read().decode("utf-8")
+        return json.loads(body) if body else None
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:200]}")
+    except Exception as e:
+        raise
+    finally:
+        if proxies:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 # ── Configuration (from env) ────────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -92,10 +136,7 @@ def tg_api(method: str, payload: dict | None = None) -> dict | None:
     Routes through Tor (§2.2 fail-closed egress) — api.telegram.org is external."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     try:
-        resp = requests.post(url, json=payload or {}, timeout=HTTP_TIMEOUT,
-                             proxies=_TOR_PROXIES)
-        resp.raise_for_status()
-        return resp.json()
+        return _http_post_json(url, payload or {}, HTTP_TIMEOUT, _TOR_PROXIES)
     except Exception as exc:  # network/timeout/http errors -> graceful
         log(f"tg_api {method} failed: {exc!r}")
         return None
@@ -140,9 +181,9 @@ def ask_llm(user_text: str) -> str:
         "stream": False,
     }
     try:
-        resp = requests.post(BLIND_PROXY_URL, json=payload, timeout=REQUESTS_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _http_post_json(BLIND_PROXY_URL, payload, REQUESTS_TIMEOUT)
+        if not data:
+            raise RuntimeError("empty LLM response")
         return data["choices"][0]["message"]["content"].strip()
     except Exception as exc:
         log(f"blind-proxy LLM call failed: {exc!r}")
@@ -188,6 +229,33 @@ def handle_update(update: dict) -> None:
     log(f"REPLY sent to {chat_id} ({len(reply)} chars)")
 
 
+def _keepalive() -> None:
+    """Self-ping loop to keep free-tier hosts (Render) from sleeping.
+
+    Render injects RENDER_EXTERNAL_URL; we ping our own root every ~5 min.
+    If the env var is absent (local / other host) this is a no-op. Stdlib only."""
+    import threading
+
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not render_url:
+        return
+
+    def _loop() -> None:
+        interval = float(os.environ.get("SELF_PING_INTERVAL", "300"))
+        while True:
+            try:
+                req = urllib.request.Request(render_url, headers={"User-Agent": "keepalive"})
+                urllib.request.urlopen(req, timeout=10).read()
+            except Exception:
+                pass  # best-effort; never crash the bridge over a ping
+            time.sleep(interval)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    log(f"keep-alive ping enabled -> {render_url} every "
+        f"{os.environ.get('SELF_PING_INTERVAL', '300')}s")
+
+
 def main() -> None:
     if not BOT_TOKEN:
         print(
@@ -196,6 +264,7 @@ def main() -> None:
         sys.exit(0)
 
     log("Telegram bridge starting.")
+    _keepalive()
     log(_TOR_LOG)
     log(f"blind-proxy LLM egress: {BLIND_PROXY_URL} (model={LLM_MODEL})")
     if ADMIN_CHAT_ID:
