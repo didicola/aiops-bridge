@@ -30,8 +30,10 @@ ENV BLIND_PROXY_URL=""
 ENV TELEGRAM_BOT_TOKEN=""
 ENV TELEGRAM_CHAT_ID=""
 
-# A poller does not need an exposed port, but documenting intent is harmless.
-# EXPOSE not required for a getUpdates poller.
+# Render Web Services REQUIRE the process to bind a port or they are killed.
+# The bridge serves a /health endpoint on $PORT (default 10000) for Render's
+# health check. EXPOSE documents intent; the bridge binds 0.0.0.0:$PORT at runtime.
+EXPOSE 10000
 
 # Run the bridge. It loops forever, polling Telegram and replying. Missing
 # TELEGRAM_BOT_TOKEN makes it print NEEDS and exit 0 (fail-safe, never fakes).
