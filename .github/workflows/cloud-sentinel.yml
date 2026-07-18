@@ -1,0 +1,33 @@
+name: Cloud Sentinel
+
+# Phase 16 — cloud-native health sentinel (port of the local log-healer, which
+# tailed this host's journals and cannot run from an ephemeral runner). Instead
+# it health-checks the LIVE cloud components (brain proxy, D1 gateway, Telegram
+# bridge) and alerts the admin over Telegram on degradation. Runs GitHub-hosted.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'     # every 30 minutes
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run cloud sentinel
+        working-directory: cloud-agents
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_URL }}
+          PROXY_AUTH_TOKEN: ${{ secrets.PROXY_AUTH_TOKEN }}
+          TELEGRAM_BRIDGE_URL: ${{ secrets.TELEGRAM_BRIDGE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT: ${{ secrets.TELEGRAM_ADMIN_CHAT }}
+        run: python3 cloud_sentinel.py
