@@ -256,6 +256,41 @@ def _keepalive() -> None:
         f"{os.environ.get('SELF_PING_INTERVAL', '300')}s")
 
 
+def _serve_health() -> None:
+    """Bind a minimal HTTP server on $PORT (Render requires a web service to bind
+    a port or it is killed). Serves a /health endpoint for Render's health check
+    and a / status page. Runs in a daemon thread; never blocks the Telegram loop.
+    Stdlib only."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    port = int(os.environ.get("PORT", os.environ.get("RENDER_PORT", "10000")))
+
+    class _H(BaseHTTPRequestHandler):
+        def _send(self, code, body):
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def do_GET(self):
+            if self.path.startswith("/health") or self.path == "/":
+                self._send(200, "asi-telegram-bridge OK\n")
+            else:
+                self._send(404, "not found\n")
+
+        def log_message(self, *a):
+            pass  # silence default logging
+
+    try:
+        srv = HTTPServer(("0.0.0.0", port), _H)
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        log(f"health server bound on 0.0.0.0:{port} (Render $PORT)")
+    except Exception as e:
+        log(f"WARN: health server failed to bind port {port}: {e!r}")
+
+
 def main() -> None:
     if not BOT_TOKEN:
         print(
@@ -264,6 +299,7 @@ def main() -> None:
         sys.exit(0)
 
     log("Telegram bridge starting.")
+    _serve_health()
     _keepalive()
     log(_TOR_LOG)
     log(f"blind-proxy LLM egress: {BLIND_PROXY_URL} (model={LLM_MODEL})")
