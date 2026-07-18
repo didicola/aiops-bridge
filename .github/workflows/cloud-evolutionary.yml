@@ -1,0 +1,41 @@
+name: Cloud Evolutionary Engine
+
+# Phase 16 — cloud-native self-optimization (replaces the self-hosted
+# evolutionary-engine.yml that required the local host + blind-proxy + pytest).
+# Uses cloud-brain-proxy to propose ONE improvement to a target file as a unified
+# diff, validates with `git apply --check`, then opens a PR (never auto-merges).
+# GitHub-hosted; the built-in GITHUB_TOKEN authorizes the push + PR.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'       # 02:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'File to analyze (relative path)'
+        required: false
+        default: 'cloud-agents/asi_cloud.py'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run evolutionary engine
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_URL }}
+          PROXY_AUTH_TOKEN: ${{ secrets.PROXY_AUTH_TOKEN }}
+          BRAIN_MODEL: ${{ vars.BRAIN_MODEL || 'cloud-brain-proxy/auto' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVOLVE_TARGET: ${{ github.event.inputs.target || 'cloud-agents/asi_cloud.py' }}
+        run: python3 cloud-agents/evolutionary.py
